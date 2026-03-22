@@ -1,0 +1,5 @@
+{
+  "name": "The Interrogation",
+  "description": "A text-based RPG engine and editor with branching dialogue, ability checks, and dice rolls.",
+  "requestFramePermissions": []
+}
