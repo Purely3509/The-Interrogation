@@ -1,95 +1,148 @@
-import { useState } from 'react';
-import { Story, Character, StoryOption } from '../../types';
-import { DiceRollModal } from './DiceRollModal';
+import { useState, useCallback } from 'react';
+import { PlayerState, RollResult, Stats, StoryData } from '../../types';
+import {
+  attemptCheck,
+  clearSave,
+  createDefaultPlayer,
+  isChoiceVisible,
+  savePlayer,
+  transitionTo,
+  STAT_NAMES,
+} from '../../engine';
+import CharacterCreation from './CharacterCreation';
+import RollModal from './RollModal';
 
-export function Player({ story, character, onExit }: { story: Story, character: Character, onExit: () => void }) {
-  const [currentNodeId, setCurrentNodeId] = useState(story.startNodeId);
-  const [rollCheck, setRollCheck] = useState<{ option: StoryOption, resolve: (nodeId: string) => void } | null>(null);
+interface Props {
+  story: StoryData;
+}
 
-  const currentNode = story.nodes[currentNodeId];
+export default function Player({ story }: Props) {
+  const [player, setPlayer] = useState<PlayerState | null>(null);
+  const [rollResult, setRollResult] = useState<RollResult | null>(null);
+  const [pendingTargetId, setPendingTargetId] = useState<string | null>(null);
 
-  const handleOptionClick = (option: StoryOption) => {
-    if (option.rollCheck) {
-      setRollCheck({
-        option,
-        resolve: (nextNodeId) => {
-          setRollCheck(null);
-          if (nextNodeId) {
-            setCurrentNodeId(nextNodeId);
-          }
-        }
-      });
-    } else if (option.targetNodeId) {
-      setCurrentNodeId(option.targetNodeId);
+  const currentNode = player ? story.nodes[player.currentNodeId] : null;
+
+  const handleCreate = useCallback((name: string, stats: Stats) => {
+    const p = { ...createDefaultPlayer(story.startNodeId), name, stats };
+    setPlayer(p);
+    savePlayer(p);
+  }, [story.startNodeId]);
+
+  const goToNode = useCallback((nodeId: string, current: PlayerState) => {
+    const node = story.nodes[nodeId];
+    if (!node) return;
+    const next = transitionTo(node, current);
+    setPlayer(next);
+    savePlayer(next);
+  }, [story.nodes]);
+
+  const handleChoice = useCallback((choiceIdx: number) => {
+    if (!player || !currentNode) return;
+    const choice = currentNode.choices[choiceIdx];
+    if (!choice) return;
+
+    if (choice.check) {
+      const result = attemptCheck(choice.check.stat, choice.check.dc, player.stats);
+      result.choiceLabel = choice.label;
+      setRollResult(result);
+      setPendingTargetId(result.success ? choice.targetId : (choice.failTargetId ?? choice.targetId));
+    } else {
+      goToNode(choice.targetId, player);
     }
-  };
+  }, [player, currentNode, goToNode]);
 
+  const handleRollContinue = useCallback(() => {
+    if (!player || !pendingTargetId) return;
+    goToNode(pendingTargetId, player);
+    setRollResult(null);
+    setPendingTargetId(null);
+  }, [player, pendingTargetId, goToNode]);
+
+  const handleRestart = useCallback(() => {
+    clearSave();
+    setPlayer(null);
+    setRollResult(null);
+    setPendingTargetId(null);
+  }, []);
+
+  // --- Character creation ---
+  if (!player) {
+    return <CharacterCreation onFinish={handleCreate} />;
+  }
+
+  // --- Missing node ---
   if (!currentNode) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen">
-        <div className="text-red-400 mb-4">Error: Node not found.</div>
-        <button onClick={onExit} className="px-4 py-2 bg-zinc-800 rounded hover:bg-zinc-700">Return to Menu</button>
+      <div className="player-screen">
+        <div className="dialogue-panel">
+          <p className="error">Node "{player.currentNodeId}" not found in story.</p>
+          <button className="btn-primary" onClick={handleRestart}>Restart</button>
+        </div>
       </div>
     );
   }
 
+  const visibleChoices = currentNode.choices
+    .map((c, i) => ({ choice: c, idx: i }))
+    .filter(({ choice }) => isChoiceVisible(choice, player));
+
   return (
-    <div className="max-w-3xl mx-auto p-8 flex flex-col min-h-screen">
-      <div className="flex justify-between items-center mb-8 pb-4 border-b border-zinc-800">
-        <div>
-          <h2 className="text-xl font-bold">{character.name}</h2>
-          <div className="flex gap-2 text-xs text-zinc-500 mt-1 flex-wrap">
-            {Object.entries(character.abilities).map(([ability, score]) => (
-              <span key={ability}>{ability}: {score}</span>
-            ))}
+    <div className="player-screen">
+      {/* Sidebar */}
+      <aside className="stats-sidebar">
+        <div className="agent-name">{player.name}</div>
+        <div className="stat-list">
+          {STAT_NAMES.map(s => (
+            <div key={s} className="stat-display">
+              <span className="stat-label">{s}</span>
+              <span className="stat-val">{player.stats[s]}</span>
+            </div>
+          ))}
+        </div>
+        {player.items.length > 0 && (
+          <div className="items-section">
+            <h4>Items</h4>
+            {player.items.map(i => <div key={i} className="item-tag">{i}</div>)}
           </div>
-        </div>
-        <button onClick={onExit} className="text-sm text-zinc-500 hover:text-zinc-300">Exit to Menu</button>
-      </div>
+        )}
+        <button className="btn-restart" onClick={handleRestart}>New Game</button>
+      </aside>
 
-      <div className="flex-1">
-        <h1 className="text-3xl font-bold mb-6 text-zinc-100">{currentNode.title}</h1>
-        <div className="prose prose-invert max-w-none mb-12 text-zinc-300 leading-relaxed whitespace-pre-wrap">
-          {currentNode.text}
-        </div>
+      {/* Main dialogue */}
+      <main className="dialogue-panel">
+        <div className="speaker">{currentNode.speaker}</div>
+        <div className="dialogue-text">{currentNode.text}</div>
 
-        <div className="space-y-3">
-          {currentNode.options.map(option => {
-            // Check requirements
-            if (option.requirement) {
-              const score = character.abilities[option.requirement.ability] || 0;
-              if (option.requirement.min !== undefined && score < option.requirement.min) return null;
-              if (option.requirement.max !== undefined && score > option.requirement.max) return null;
-            }
-
-            return (
+        {currentNode.ending ? (
+          <div className="ending">
+            <p className="ending-label">— END —</p>
+            <button className="btn-primary" onClick={handleRestart}>Play Again</button>
+          </div>
+        ) : (
+          <div className="choices">
+            {visibleChoices.map(({ choice, idx }) => (
               <button
-                key={option.id}
-                onClick={() => handleOptionClick(option)}
-                className="w-full text-left p-4 bg-zinc-900/50 border border-zinc-800 rounded-lg hover:bg-zinc-800 hover:border-zinc-700 transition group"
+                key={idx}
+                className={`btn-choice ${choice.check ? 'has-check' : ''}`}
+                onClick={() => handleChoice(idx)}
               >
-                <span className="text-zinc-200 group-hover:text-white">{option.text}</span>
-                {option.rollCheck && (
-                  <span className="ml-3 text-xs font-mono text-zinc-500 bg-zinc-950 px-2 py-1 rounded">
-                    Roll {option.rollCheck.ability} (DR {option.rollCheck.difficulty})
+                {choice.label}
+                {choice.check && (
+                  <span className="check-badge">
+                    {choice.check.stat.toUpperCase()} DC {choice.check.dc}
                   </span>
                 )}
               </button>
-            );
-          })}
-          {currentNode.options.length === 0 && (
-            <div className="text-zinc-500 italic mt-8">End of path.</div>
-          )}
-        </div>
-      </div>
+            ))}
+            {visibleChoices.length === 0 && !currentNode.ending && (
+              <p className="dead-end">No available options. <button className="btn-link" onClick={handleRestart}>Restart</button></p>
+            )}
+          </div>
+        )}
+      </main>
 
-      {rollCheck && (
-        <DiceRollModal 
-          option={rollCheck.option} 
-          character={character} 
-          onComplete={rollCheck.resolve} 
-        />
-      )}
+      {rollResult && <RollModal result={rollResult} onContinue={handleRollContinue} />}
     </div>
   );
 }
