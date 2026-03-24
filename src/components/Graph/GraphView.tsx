@@ -1,6 +1,5 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
-import { StoryData, Choice } from '../../types';
-import { saveStory } from '../../engine';
+import { StoryData, StoryNode, Choice } from '../../types';
 
 interface Props {
   story: StoryData;
@@ -161,6 +160,15 @@ export default function GraphView({ story, onStoryChange }: Props) {
   const [connectionPrompt, setConnectionPrompt] = useState<{ sourceId: string; targetId: string } | null>(null);
   const [connectionLabel, setConnectionLabel] = useState('');
 
+  // Node creation state
+  const [nodePrompt, setNodePrompt] = useState<{ x: number; y: number } | null>(null);
+  const [newNodeId, setNewNodeId] = useState('');
+  const [newNodeSpeaker, setNewNodeSpeaker] = useState('Interrogator');
+  const [newNodeText, setNewNodeText] = useState('');
+  const [newNodeEnding, setNewNodeEnding] = useState(false);
+
+  let nodeCounter = useRef(0);
+
   // Track if graph has been laid out to preserve positions on edge-only changes
   const hasLaidOut = useRef(false);
 
@@ -306,10 +314,99 @@ export default function GraphView({ story, onStoryChange }: Props) {
       nodes: { ...story.nodes, [sourceId]: updatedNode },
     };
     onStoryChange(updatedStory);
-    saveStory(updatedStory);
     setConnectionPrompt(null);
     setConnectionLabel('');
   }, [connectionPrompt, connectionLabel, onStoryChange, story]);
+
+  const openCreateNodeAt = useCallback((svgX: number, svgY: number) => {
+    if (!onStoryChange) return;
+    nodeCounter.current++;
+    setNewNodeId(`node_${Date.now()}_${nodeCounter.current}`);
+    setNewNodeSpeaker('Interrogator');
+    setNewNodeText('');
+    setNewNodeEnding(false);
+    setNodePrompt({ x: svgX, y: svgY });
+  }, [onStoryChange]);
+
+  const handleDoubleClick = useCallback((e: React.MouseEvent) => {
+    if (!onStoryChange) return;
+    const target = e.target as SVGElement;
+    // Only on background
+    if (target === svgRef.current || target.tagName === 'svg' || target.classList.contains('graph-bg')) {
+      const { x, y } = toSvgCoords(e.clientX, e.clientY);
+      openCreateNodeAt(x, y);
+    }
+  }, [onStoryChange, toSvgCoords, openCreateNodeAt]);
+
+  const handleAddNodeToolbar = useCallback(() => {
+    // Place new node near center of current view
+    const svg = svgRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    const cx = (rect.width / 2 - pan.x) / zoom;
+    const cy = (rect.height / 2 - pan.y) / zoom;
+    openCreateNodeAt(cx, cy);
+  }, [pan, zoom, openCreateNodeAt]);
+
+  const handleCreateNode = useCallback(() => {
+    if (!nodePrompt || !newNodeId.trim() || !onStoryChange) return;
+    if (story.nodes[newNodeId.trim()]) {
+      alert('A node with this ID already exists.');
+      return;
+    }
+    const id = newNodeId.trim();
+    const newNode: StoryNode = {
+      id,
+      speaker: newNodeSpeaker,
+      text: newNodeText,
+      choices: [],
+      ending: newNodeEnding || undefined,
+    };
+    const updatedStory: StoryData = {
+      ...story,
+      nodes: { ...story.nodes, [id]: newNode },
+    };
+    // Pre-position the new node in the graph data so it appears at the click location
+    if (graphData) {
+      const newGraphNode: GraphNode = {
+        id,
+        x: nodePrompt.x,
+        y: nodePrompt.y,
+        vx: 0,
+        vy: 0,
+        speaker: newNodeSpeaker,
+        isStart: false,
+        isEnding: !!newNodeEnding,
+        choiceCount: 0,
+        text: newNodeText.slice(0, 120) + (newNodeText.length > 120 ? '...' : ''),
+        pinned: true,
+      };
+      setGraphData(prev => prev ? {
+        nodes: [...prev.nodes, newGraphNode],
+        edges: prev.edges,
+      } : prev);
+    }
+    onStoryChange(updatedStory);
+    setNodePrompt(null);
+    setSelectedNode(id);
+  }, [nodePrompt, newNodeId, newNodeSpeaker, newNodeText, newNodeEnding, onStoryChange, story, graphData]);
+
+  const handleDeleteNode = useCallback(() => {
+    if (!selectedNode || !onStoryChange) return;
+    if (selectedNode === story.startNodeId) {
+      alert('Cannot delete the start node.');
+      return;
+    }
+    const nodes = { ...story.nodes };
+    delete nodes[selectedNode];
+    // Remove dangling references
+    for (const n of Object.values(nodes)) {
+      n.choices = n.choices.filter(c => c.targetId !== selectedNode && c.failTargetId !== selectedNode);
+    }
+    const updatedStory: StoryData = { ...story, nodes };
+    onStoryChange(updatedStory);
+    setSelectedNode(null);
+  }, [selectedNode, onStoryChange, story]);
 
   if (!graphData) return <div className="graph-loading">Generating layout...</div>;
 
@@ -340,6 +437,7 @@ export default function GraphView({ story, onStoryChange }: Props) {
         </label>
         <span className="graph-stats">{graphData.nodes.length} nodes · {graphData.edges.length} edges</span>
         <button className="btn-secondary" onClick={() => { setPan({ x: 0, y: 0 }); setZoom(0.85); }}>Reset View</button>
+        {onStoryChange && <button className="btn-primary" onClick={handleAddNodeToolbar}>+ New Node</button>}
       </div>
 
       <div className="graph-container">
@@ -351,6 +449,7 @@ export default function GraphView({ story, onStoryChange }: Props) {
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
+          onDoubleClick={handleDoubleClick}
           style={{ cursor: connecting ? 'crosshair' : undefined }}
         >
           <defs>
@@ -546,6 +645,60 @@ export default function GraphView({ story, onStoryChange }: Props) {
           </div>
         )}
 
+        {/* Node creation modal */}
+        {nodePrompt && (
+          <div className="modal-overlay" onClick={() => setNodePrompt(null)}>
+            <div className="modal connection-modal" onClick={e => e.stopPropagation()}>
+              <h3>Create Node</h3>
+              <label>
+                Node ID
+                <input
+                  type="text"
+                  value={newNodeId}
+                  onChange={e => setNewNodeId(e.target.value)}
+                  placeholder="unique_node_id"
+                  autoFocus
+                />
+              </label>
+              <label>
+                Speaker
+                <input
+                  type="text"
+                  value={newNodeSpeaker}
+                  onChange={e => setNewNodeSpeaker(e.target.value)}
+                  placeholder="Interrogator"
+                />
+              </label>
+              <label>
+                Text
+                <textarea
+                  value={newNodeText}
+                  onChange={e => setNewNodeText(e.target.value)}
+                  placeholder="Dialogue or narration text..."
+                  rows={3}
+                  style={{
+                    background: 'var(--surface2)',
+                    border: '1px solid var(--border)',
+                    color: 'var(--text)',
+                    fontFamily: 'var(--font)',
+                    fontSize: '13px',
+                    padding: '8px 10px',
+                    resize: 'vertical',
+                  }}
+                />
+              </label>
+              <label className="checkbox-label" style={{ flexDirection: 'row', alignItems: 'center', gap: '8px' }}>
+                <input type="checkbox" checked={newNodeEnding} onChange={e => setNewNodeEnding(e.target.checked)} style={{ width: 'auto' }} />
+                Ending Node
+              </label>
+              <div className="connection-actions">
+                <button className="btn-secondary" onClick={() => setNodePrompt(null)}>Cancel</button>
+                <button className="btn-primary" disabled={!newNodeId.trim()} onClick={handleCreateNode}>Create</button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Detail panel */}
         {selected && (
           <div className="graph-detail">
@@ -575,6 +728,9 @@ export default function GraphView({ story, onStoryChange }: Props) {
               <div className="graph-detail-flags">Grants: {selected.grantItems.join(', ')}</div>
             )}
             {selected.ending && <div className="graph-detail-ending">ENDING NODE</div>}
+            {onStoryChange && selectedNode !== story.startNodeId && (
+              <button className="btn-danger" style={{ marginTop: '8px', width: '100%' }} onClick={handleDeleteNode}>Delete Node</button>
+            )}
           </div>
         )}
       </div>
@@ -586,7 +742,7 @@ export default function GraphView({ story, onStoryChange }: Props) {
         <span><span className="legend-dot legend-normal" /> Scene</span>
         <span><span className="legend-line legend-solid" /> Choice</span>
         <span><span className="legend-line legend-dashed" /> Fail Path</span>
-        {onStoryChange && <span style={{ marginLeft: 'auto', color: '#c0a050' }}>Drag outer ring to connect nodes</span>}
+        {onStoryChange && <span style={{ marginLeft: 'auto', color: '#c0a050' }}>Double-click to add node · Drag outer ring to connect</span>}
       </div>
     </div>
   );

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { StoryData, StoryNode, StatConfig, StatDefinition } from '../../types';
-import { saveStory, renameNode } from '../../engine';
+import { renameNode } from '../../engine';
 import StoryMap from './StoryMap';
 import NodeEditor from './NodeEditor';
 
@@ -34,7 +34,6 @@ export default function Editor({ story, onStoryChange }: Props) {
       statConfig: sc ?? statConfig,
     };
     onStoryChange(updated);
-    saveStory(updated);
   }
 
   function handleAddNode() {
@@ -60,7 +59,6 @@ export default function Editor({ story, onStoryChange }: Props) {
       title: storyTitle,
     };
     onStoryChange(updated);
-    saveStory(updated);
     setStartNodeId(updated.startNodeId);
     setSelectedNodeId(updatedNode.id);
   }
@@ -116,7 +114,6 @@ export default function Editor({ story, onStoryChange }: Props) {
             setStoryTitle(data.title);
             setStartNodeId(data.startNodeId);
             onStoryChange(data);
-            saveStory(data);
             setSelectedNodeId(null);
           }
         } catch {
