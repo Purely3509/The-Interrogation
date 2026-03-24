@@ -13,12 +13,20 @@ export default function RollModal({ result, onContinue }: Props) {
         <div className="roll-details">
           <span className="roll-stat">{result.stat.toUpperCase()} check — DC {result.dc}</span>
           <div className="roll-breakdown">
-            <span className="roll-die">🎲 {result.roll}</span>
+            <span className="roll-die">🎲 {result.dice[0]}</span>
+            <span className="roll-plus">+</span>
+            <span className="roll-die">🎲 {result.dice[1]}</span>
             <span className="roll-plus">+</span>
             <span className="roll-mod">{result.modifier} ({result.stat})</span>
             <span className="roll-equals">=</span>
             <span className="roll-total">{result.total}</span>
           </div>
+          {result.critFail && (
+            <div className="roll-crit crit-fail">SNAKE EYES — AUTO FAIL</div>
+          )}
+          {result.critSuccess && (
+            <div className="roll-crit crit-success">DOUBLE SIXES — AUTO SUCCESS</div>
+          )}
           <div className={`roll-outcome ${result.success ? 'success' : 'failure'}`}>
             {result.success ? 'SUCCESS' : 'FAILURE'}
           </div>

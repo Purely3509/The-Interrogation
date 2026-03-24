@@ -1,3 +1,23 @@
+// --- Stat Configuration ---
+
+export interface StatDefinition {
+  /** Internal key used in code and data (e.g., "resolve") */
+  key: string;
+  /** Display name shown in UI (e.g., "Resolve") */
+  name: string;
+  /** Tooltip/help text describing the stat */
+  description: string;
+}
+
+export interface StatConfig {
+  /** Ordered list of stat definitions */
+  stats: StatDefinition[];
+  /** Per-stat maximum value (default 6) */
+  maxValue: number;
+  /** Total points available for allocation (default 10) */
+  pointTotal: number;
+}
+
 // --- Story Graph ---
 
 export interface StoryNode {
@@ -16,6 +36,8 @@ export interface StoryNode {
   removeItems?: string[];
   /** If true, this is a terminal / ending node */
   ending?: boolean;
+  /** If true, reaching this node triggers the stat confirmation screen */
+  statConfirmation?: boolean;
 }
 
 export interface Choice {
@@ -23,7 +45,7 @@ export interface Choice {
   label: string;
   /** Target node id */
   targetId: string;
-  /** Stat check required to pick this choice (player rolls d20 + stat vs DC) */
+  /** Stat check required to pick this choice (player rolls 2d6 + stat vs DC) */
   check?: StatCheck;
   /** Flags the player must have to see this choice */
   requireFlags?: string[];
@@ -33,23 +55,19 @@ export interface Choice {
   requireItems?: string[];
   /** Where to go if the stat check fails */
   failTargetId?: string;
+  /** Stat bonuses granted when this choice is selected */
+  statBonuses?: Stats;
 }
 
 export interface StatCheck {
-  stat: StatName;
+  stat: string;
   dc: number;
 }
 
 // --- Player State ---
 
-export type StatName = 'resolve' | 'wit' | 'composure' | 'deception';
-
-export interface Stats {
-  resolve: number;
-  wit: number;
-  composure: number;
-  deception: number;
-}
+/** Stats are a dynamic map of stat key → value */
+export type Stats = Record<string, number>;
 
 export interface PlayerState {
   name: string;
@@ -66,16 +84,23 @@ export interface StoryData {
   title: string;
   startNodeId: string;
   nodes: Record<string, StoryNode>;
+  /** Configuration for the stat system */
+  statConfig: StatConfig;
 }
 
 // --- Roll result shown to user ---
 
 export interface RollResult {
-  stat: StatName;
+  stat: string;
   dc: number;
-  roll: number;
+  /** The two d6 dice values */
+  dice: [number, number];
   modifier: number;
   total: number;
   success: boolean;
+  /** Rolled double 1s — automatic failure */
+  critFail: boolean;
+  /** Rolled double 6s — automatic success */
+  critSuccess: boolean;
   choiceLabel: string;
 }

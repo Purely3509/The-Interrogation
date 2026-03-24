@@ -29,7 +29,7 @@ export default function App() {
       ) : mode === 'edit' ? (
         <Editor story={story} onStoryChange={setStory} />
       ) : (
-        <GraphView story={story} />
+        <GraphView story={story} onStoryChange={setStory} />
       )}
     </div>
   );

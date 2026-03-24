@@ -3,6 +3,16 @@ import { StoryData } from '../types';
 const defaultStory: StoryData = {
   title: 'The Interrogation',
   startNodeId: 'intro',
+  statConfig: {
+    stats: [
+      { key: 'resolve', name: 'Resolve', description: 'Mental fortitude. Resist pressure, endure pain, hold your nerve.' },
+      { key: 'wit', name: 'Wit', description: 'Quick thinking. Talk your way out, spot inconsistencies, improvise.' },
+      { key: 'composure', name: 'Composure', description: 'Emotional control. Stay calm, hide reactions, maintain cover.' },
+      { key: 'deception', name: 'Deception', description: 'The art of lying. Mislead, misdirect, fabricate convincingly.' },
+    ],
+    maxValue: 6,
+    pointTotal: 10,
+  },
   nodes: {
     intro: {
       id: 'intro',
@@ -14,7 +24,7 @@ const defaultStory: StoryData = {
         {
           label: 'Try to slip one hand free of the cuffs',
           targetId: 'cuffs_success',
-          check: { stat: 'composure', dc: 14 },
+          check: { stat: 'composure', dc: 9 },
           failTargetId: 'cuffs_fail',
         },
       ],
@@ -30,7 +40,7 @@ const defaultStory: StoryData = {
         {
           label: 'Fabricate a convincing alibi',
           targetId: 'alibi_success',
-          check: { stat: 'deception', dc: 12 },
+          check: { stat: 'deception', dc: 8 },
           failTargetId: 'alibi_fail',
         },
         { label: '"What building is that in the photo?"', targetId: 'ask_about_photo', requireFlags: ['observed_photo'] },
@@ -47,7 +57,7 @@ const defaultStory: StoryData = {
         {
           label: 'Read his body language for weakness',
           targetId: 'read_success',
-          check: { stat: 'wit', dc: 13 },
+          check: { stat: 'wit', dc: 8 },
           failTargetId: 'read_fail',
         },
       ],
@@ -83,13 +93,13 @@ const defaultStory: StoryData = {
         {
           label: 'Hold your nerve and refuse to speak',
           targetId: 'refuse_success',
-          check: { stat: 'resolve', dc: 14 },
+          check: { stat: 'resolve', dc: 9 },
           failTargetId: 'refuse_fail',
         },
         {
           label: 'Fabricate a convincing alibi',
           targetId: 'alibi_success',
-          check: { stat: 'deception', dc: 12 },
+          check: { stat: 'deception', dc: 8 },
           failTargetId: 'alibi_fail',
         },
       ],
@@ -115,7 +125,7 @@ const defaultStory: StoryData = {
         {
           label: 'Stay calm and pivot',
           targetId: 'pivot_success',
-          check: { stat: 'composure', dc: 15 },
+          check: { stat: 'composure', dc: 10 },
           failTargetId: 'pivot_fail',
         },
       ],
@@ -139,7 +149,7 @@ const defaultStory: StoryData = {
         {
           label: '"You don\'t have anything on me."',
           targetId: 'bluff_success',
-          check: { stat: 'deception', dc: 15 },
+          check: { stat: 'deception', dc: 10 },
           failTargetId: 'bluff_fail',
         },
         { label: '"How does this end?"', targetId: 'how_it_ends' },
@@ -156,7 +166,7 @@ const defaultStory: StoryData = {
         {
           label: 'Deflect with a half-truth',
           targetId: 'deflect_mira_success',
-          check: { stat: 'wit', dc: 14 },
+          check: { stat: 'wit', dc: 9 },
           failTargetId: 'deflect_mira_fail',
         },
       ],
@@ -218,7 +228,7 @@ const defaultStory: StoryData = {
           label: 'Use your loose cuffs to grab the folder',
           targetId: 'grab_folder',
           requireItems: ['Loose Cuffs'],
-          check: { stat: 'composure', dc: 12 },
+          check: { stat: 'composure', dc: 8 },
           failTargetId: 'grab_folder_fail',
         },
       ],
@@ -293,7 +303,7 @@ const defaultStory: StoryData = {
         {
           label: '"That\'s above your clearance."',
           targetId: 'press_interrogator',
-          check: { stat: 'wit', dc: 13 },
+          check: { stat: 'wit', dc: 8 },
           failTargetId: 'how_it_ends',
         },
       ],
@@ -350,7 +360,7 @@ const defaultStory: StoryData = {
         {
           label: '"If she\'s here, you already know everything."',
           targetId: 'negotiate',
-          check: { stat: 'wit', dc: 14 },
+          check: { stat: 'wit', dc: 9 },
           failTargetId: 'how_it_ends',
         },
         { label: '"Don\'t hurt her."', targetId: 'how_it_ends' },
@@ -377,7 +387,7 @@ const defaultStory: StoryData = {
         {
           label: 'Stay stone-faced',
           targetId: 'demand_lawyer',
-          check: { stat: 'resolve', dc: 16 },
+          check: { stat: 'resolve', dc: 11 },
           failTargetId: 'how_it_ends',
         },
       ],

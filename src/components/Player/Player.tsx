@@ -1,15 +1,16 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { PlayerState, RollResult, Stats, StoryData } from '../../types';
 import {
   attemptCheck,
   clearSave,
   createDefaultPlayer,
+  createProloguePlayer,
   isChoiceVisible,
   savePlayer,
   transitionTo,
-  STAT_NAMES,
 } from '../../engine';
 import CharacterCreation from './CharacterCreation';
+import StatConfirmation from './StatConfirmation';
 import RollModal from './RollModal';
 
 interface Props {
@@ -20,22 +21,50 @@ export default function Player({ story }: Props) {
   const [player, setPlayer] = useState<PlayerState | null>(null);
   const [rollResult, setRollResult] = useState<RollResult | null>(null);
   const [pendingTargetId, setPendingTargetId] = useState<string | null>(null);
+  const [showConfirmation, setShowConfirmation] = useState(false);
 
   const currentNode = player ? story.nodes[player.currentNodeId] : null;
+  const statConfig = story.statConfig;
+
+  // Check if any node in the story uses the dynamic opening (statConfirmation)
+  const usesPrologue = useMemo(() => {
+    return Object.values(story.nodes).some(n => n.statConfirmation);
+  }, [story.nodes]);
 
   const handleCreate = useCallback((name: string, stats: Stats) => {
-    const p = { ...createDefaultPlayer(story.startNodeId), name, stats };
+    const p = { ...createDefaultPlayer(story.startNodeId, statConfig), name, stats };
     setPlayer(p);
     savePlayer(p);
-  }, [story.startNodeId]);
+  }, [story.startNodeId, statConfig]);
 
-  const goToNode = useCallback((nodeId: string, current: PlayerState) => {
+  const handlePrologueStart = useCallback(() => {
+    const p = createProloguePlayer(story.startNodeId, statConfig);
+    setPlayer(p);
+    savePlayer(p);
+  }, [story.startNodeId, statConfig]);
+
+  const goToNode = useCallback((nodeId: string, current: PlayerState, selectedChoice?: { choiceIdx: number }) => {
     const node = story.nodes[nodeId];
     if (!node) return;
-    const next = transitionTo(node, current);
+
+    // Get the choice that was selected (for stat bonuses)
+    let choice = undefined;
+    if (selectedChoice !== undefined) {
+      const currentNode = story.nodes[current.currentNodeId];
+      if (currentNode) {
+        choice = currentNode.choices[selectedChoice.choiceIdx];
+      }
+    }
+
+    const next = transitionTo(node, current, choice, statConfig);
     setPlayer(next);
     savePlayer(next);
-  }, [story.nodes]);
+
+    // Check if we arrived at a stat confirmation node
+    if (node.statConfirmation) {
+      setShowConfirmation(true);
+    }
+  }, [story.nodes, statConfig]);
 
   const handleChoice = useCallback((choiceIdx: number) => {
     if (!player || !currentNode) return;
@@ -48,27 +77,57 @@ export default function Player({ story }: Props) {
       setRollResult(result);
       setPendingTargetId(result.success ? choice.targetId : (choice.failTargetId ?? choice.targetId));
     } else {
-      goToNode(choice.targetId, player);
+      goToNode(choice.targetId, player, { choiceIdx });
     }
   }, [player, currentNode, goToNode]);
 
   const handleRollContinue = useCallback(() => {
-    if (!player || !pendingTargetId) return;
-    goToNode(pendingTargetId, player);
+    if (!player || !pendingTargetId || !currentNode) return;
+    // Find the choice index for stat bonuses
+    const choiceIdx = currentNode.choices.findIndex(c =>
+      c.targetId === pendingTargetId || c.failTargetId === pendingTargetId
+    );
+    goToNode(pendingTargetId, player, choiceIdx >= 0 ? { choiceIdx } : undefined);
     setRollResult(null);
     setPendingTargetId(null);
-  }, [player, pendingTargetId, goToNode]);
+  }, [player, pendingTargetId, currentNode, goToNode]);
+
+  const handleConfirm = useCallback((name: string, stats: Stats) => {
+    if (!player || !currentNode) return;
+    const updated = { ...player, name, stats };
+    setPlayer(updated);
+    savePlayer(updated);
+    setShowConfirmation(false);
+  }, [player, currentNode]);
 
   const handleRestart = useCallback(() => {
     clearSave();
     setPlayer(null);
     setRollResult(null);
     setPendingTargetId(null);
+    setShowConfirmation(false);
   }, []);
 
-  // --- Character creation ---
+  // --- No player yet ---
   if (!player) {
-    return <CharacterCreation onFinish={handleCreate} />;
+    if (usesPrologue) {
+      // Auto-start with prologue player
+      handlePrologueStart();
+      return null;
+    }
+    return <CharacterCreation statConfig={statConfig} onFinish={handleCreate} />;
+  }
+
+  // --- Stat confirmation screen ---
+  if (showConfirmation && currentNode) {
+    return (
+      <StatConfirmation
+        player={player}
+        node={currentNode}
+        statConfig={statConfig}
+        onConfirm={handleConfirm}
+      />
+    );
   }
 
   // --- Missing node ---
@@ -93,10 +152,10 @@ export default function Player({ story }: Props) {
       <aside className="stats-sidebar">
         <div className="agent-name">{player.name}</div>
         <div className="stat-list">
-          {STAT_NAMES.map(s => (
-            <div key={s} className="stat-display">
-              <span className="stat-label">{s}</span>
-              <span className="stat-val">{player.stats[s]}</span>
+          {statConfig.stats.map(def => (
+            <div key={def.key} className="stat-display">
+              <span className="stat-label">{def.name}</span>
+              <span className="stat-val">{player.stats[def.key] ?? 0}</span>
             </div>
           ))}
         </div>

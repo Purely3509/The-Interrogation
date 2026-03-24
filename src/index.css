@@ -981,3 +981,231 @@ button {
 }
 
 .legend-dashed { border-top-style: dashed; border-top-color: #c04040; }
+
+/* === Validation Errors === */
+.input-error {
+  border-color: var(--danger) !important;
+}
+
+.field-error {
+  color: var(--danger);
+  font-size: 10px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+/* === Stat Config Editor === */
+.stat-config-editor {
+  padding: 12px 16px;
+  background: var(--surface2);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.stat-config-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+
+.stat-config-header h4 {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: var(--text-dim);
+}
+
+.stat-config-globals {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.stat-config-globals label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+}
+
+.stat-config-globals input {
+  width: 60px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 12px;
+  padding: 4px 6px;
+}
+
+.stat-config-globals input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.stat-config-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.stat-config-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.stat-config-row input {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 12px;
+  padding: 6px 8px;
+}
+
+.stat-config-row input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.stat-config-key { width: 120px; }
+.stat-config-name { width: 140px; }
+.stat-config-desc { flex: 1; }
+
+/* === Roll Crit Messages === */
+.roll-crit {
+  font-size: 12px;
+  letter-spacing: 2px;
+  text-align: center;
+  padding: 6px;
+  text-transform: uppercase;
+  font-weight: bold;
+}
+
+.crit-fail {
+  color: var(--failure);
+  border: 1px solid var(--failure);
+}
+
+.crit-success {
+  color: var(--success);
+  border: 1px solid var(--success);
+}
+
+/* === Connection Modal === */
+.connection-modal h3 {
+  font-size: 14px;
+  letter-spacing: 1px;
+  margin-bottom: 8px;
+  color: var(--text);
+}
+
+.connection-info {
+  font-size: 12px;
+  color: var(--accent);
+  margin-bottom: 16px;
+  letter-spacing: 1px;
+}
+
+.connection-modal label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+  margin-bottom: 16px;
+}
+
+.connection-modal input {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 13px;
+  padding: 8px 10px;
+}
+
+.connection-modal input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.connection-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* === Stat Bonus Inputs === */
+.checkbox-row {
+  display: flex;
+  gap: 24px;
+}
+
+.choice-bonuses-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.stat-bonus-inputs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.stat-bonus-label {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 2px !important;
+  font-size: 10px !important;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.stat-bonus-label input {
+  width: 50px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 11px;
+  padding: 4px 6px;
+  text-align: center;
+}
+
+.stat-bonus-label input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* === Stat Confirmation === */
+.confirmation-narrative {
+  width: 100%;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+
+.stat-bonus {
+  color: var(--success);
+  font-size: 12px;
+}
+
+.stat-penalty {
+  color: var(--danger);
+  font-size: 12px;
+}

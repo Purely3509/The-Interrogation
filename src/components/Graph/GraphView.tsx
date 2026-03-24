@@ -1,8 +1,10 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
-import { StoryData } from '../../types';
+import { StoryData, Choice } from '../../types';
+import { saveStory } from '../../engine';
 
 interface Props {
   story: StoryData;
+  onStoryChange?: (story: StoryData) => void;
 }
 
 interface GraphNode {
@@ -29,6 +31,7 @@ interface GraphEdge {
 
 const NODE_RADIUS = 24;
 const LABEL_OFFSET = 32;
+const CONNECTION_ZONE = 8; // outer ring thickness for connection drag
 
 function buildGraph(story: StoryData): { nodes: GraphNode[]; edges: GraphEdge[] } {
   const nodes: GraphNode[] = [];
@@ -142,7 +145,7 @@ function forceSimulation(nodes: GraphNode[], edges: GraphEdge[], iterations: num
   }
 }
 
-export default function GraphView({ story }: Props) {
+export default function GraphView({ story, onStoryChange }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [graphData, setGraphData] = useState<{ nodes: GraphNode[]; edges: GraphEdge[] } | null>(null);
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
@@ -153,11 +156,53 @@ export default function GraphView({ story }: Props) {
   const dragging = useRef<{ nodeId: string; offsetX: number; offsetY: number } | null>(null);
   const panning = useRef<{ startX: number; startY: number; panX: number; panY: number } | null>(null);
 
+  // Connection drag state
+  const [connecting, setConnecting] = useState<{ sourceId: string; mouseX: number; mouseY: number } | null>(null);
+  const [connectionPrompt, setConnectionPrompt] = useState<{ sourceId: string; targetId: string } | null>(null);
+  const [connectionLabel, setConnectionLabel] = useState('');
+
+  // Track if graph has been laid out to preserve positions on edge-only changes
+  const hasLaidOut = useRef(false);
+
   useEffect(() => {
-    const { nodes, edges } = buildGraph(story);
-    forceSimulation(nodes, edges, 300);
-    setGraphData({ nodes, edges });
-  }, [story]);
+    if (hasLaidOut.current && graphData) {
+      // Story changed but we already have a layout — update edges without re-simulating
+      const existingPositions = new Map(graphData.nodes.map(n => [n.id, { x: n.x, y: n.y, pinned: n.pinned }]));
+      const { nodes: newNodes, edges: newEdges } = buildGraph(story);
+      // Restore positions for existing nodes
+      for (const node of newNodes) {
+        const pos = existingPositions.get(node.id);
+        if (pos) {
+          node.x = pos.x;
+          node.y = pos.y;
+          node.pinned = pos.pinned;
+        }
+      }
+      // Only re-simulate if nodes were added/removed
+      const oldIds = new Set(graphData.nodes.map(n => n.id));
+      const newIds = new Set(newNodes.map(n => n.id));
+      const nodesChanged = oldIds.size !== newIds.size || [...oldIds].some(id => !newIds.has(id));
+      if (nodesChanged) {
+        forceSimulation(newNodes, newEdges, 300);
+      }
+      setGraphData({ nodes: newNodes, edges: newEdges });
+    } else {
+      const { nodes, edges } = buildGraph(story);
+      forceSimulation(nodes, edges, 300);
+      setGraphData({ nodes, edges });
+      hasLaidOut.current = true;
+    }
+  }, [story]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const toSvgCoords = useCallback((clientX: number, clientY: number) => {
+    const svg = svgRef.current;
+    if (!svg) return { x: 0, y: 0 };
+    const rect = svg.getBoundingClientRect();
+    return {
+      x: (clientX - rect.left - pan.x) / zoom,
+      y: (clientY - rect.top - pan.y) / zoom,
+    };
+  }, [pan, zoom]);
 
   const handleWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault();
@@ -175,12 +220,19 @@ export default function GraphView({ story }: Props) {
   }, [pan]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    if (dragging.current && graphData) {
+    if (connecting) {
       const svg = svgRef.current;
       if (!svg) return;
       const rect = svg.getBoundingClientRect();
-      const x = (e.clientX - rect.left - pan.x) / zoom;
-      const y = (e.clientY - rect.top - pan.y) / zoom;
+      setConnecting(prev => prev ? {
+        ...prev,
+        mouseX: (e.clientX - rect.left - pan.x) / zoom,
+        mouseY: (e.clientY - rect.top - pan.y) / zoom,
+      } : null);
+      return;
+    }
+    if (dragging.current && graphData) {
+      const { x, y } = toSvgCoords(e.clientX, e.clientY);
       setGraphData(prev => {
         if (!prev) return prev;
         const nodes = prev.nodes.map(n =>
@@ -194,17 +246,70 @@ export default function GraphView({ story }: Props) {
       const dy = e.clientY - panning.current.startY;
       setPan({ x: panning.current.panX + dx, y: panning.current.panY + dy });
     }
-  }, [graphData, pan, zoom]);
+  }, [graphData, pan, zoom, connecting, toSvgCoords]);
 
   const handleMouseUp = useCallback(() => {
+    if (connecting) {
+      // Dropped on background — cancel connection
+      setConnecting(null);
+    }
     dragging.current = null;
     panning.current = null;
-  }, []);
+  }, [connecting]);
 
   const handleNodeMouseDown = useCallback((e: React.MouseEvent, nodeId: string) => {
     e.stopPropagation();
+    if (!onStoryChange || !graphData) {
+      // No story change handler — just drag to reposition
+      dragging.current = { nodeId, offsetX: 0, offsetY: 0 };
+      return;
+    }
+
+    // Check if click is in the outer ring (connection zone)
+    const gNode = graphData.nodes.find(n => n.id === nodeId);
+    if (gNode) {
+      const { x: svgX, y: svgY } = toSvgCoords(e.clientX, e.clientY);
+      const dx = svgX - gNode.x;
+      const dy = svgY - gNode.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (dist > NODE_RADIUS - CONNECTION_ZONE) {
+        // Start connection drag from outer ring
+        setConnecting({ sourceId: nodeId, mouseX: svgX, mouseY: svgY });
+        return;
+      }
+    }
+
+    // Inner area — reposition drag
     dragging.current = { nodeId, offsetX: 0, offsetY: 0 };
-  }, []);
+  }, [onStoryChange, graphData, toSvgCoords]);
+
+  const handleNodeMouseUp = useCallback((e: React.MouseEvent, nodeId: string) => {
+    if (connecting && connecting.sourceId !== nodeId) {
+      e.stopPropagation();
+      setConnectionPrompt({ sourceId: connecting.sourceId, targetId: nodeId });
+      setConnectionLabel('');
+      setConnecting(null);
+    }
+  }, [connecting]);
+
+  const handleCreateConnection = useCallback(() => {
+    if (!connectionPrompt || !connectionLabel.trim() || !onStoryChange) return;
+    const { sourceId, targetId } = connectionPrompt;
+    const sourceNode = story.nodes[sourceId];
+    if (!sourceNode) return;
+
+    const newChoice: Choice = { label: connectionLabel.trim(), targetId };
+    const updatedNode = { ...sourceNode, choices: [...sourceNode.choices, newChoice] };
+    const updatedStory: StoryData = {
+      ...story,
+      nodes: { ...story.nodes, [sourceId]: updatedNode },
+    };
+    onStoryChange(updatedStory);
+    saveStory(updatedStory);
+    setConnectionPrompt(null);
+    setConnectionLabel('');
+  }, [connectionPrompt, connectionLabel, onStoryChange, story]);
 
   if (!graphData) return <div className="graph-loading">Generating layout...</div>;
 
@@ -246,6 +351,7 @@ export default function GraphView({ story }: Props) {
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
+          style={{ cursor: connecting ? 'crosshair' : undefined }}
         >
           <defs>
             <marker id="arrow" viewBox="0 0 10 6" refX="10" refY="3" markerWidth="8" markerHeight="6" orient="auto-start-reverse">
@@ -320,18 +426,38 @@ export default function GraphView({ story }: Props) {
               );
             })}
 
+            {/* Connection drag preview line */}
+            {connecting && (() => {
+              const sourceNode = nodeMap.get(connecting.sourceId);
+              if (!sourceNode) return null;
+              return (
+                <line
+                  x1={sourceNode.x}
+                  y1={sourceNode.y}
+                  x2={connecting.mouseX}
+                  y2={connecting.mouseY}
+                  stroke="#c0a050"
+                  strokeWidth={2}
+                  strokeDasharray="6,4"
+                  opacity={0.8}
+                />
+              );
+            })()}
+
             {/* Nodes */}
             {graphData.nodes.map(node => {
               const isConnected = connectedNodes.has(node.id);
               const opacity = (hoveredNode || selectedNode) ? (isConnected ? 1 : 0.2) : 1;
               const isHovered = node.id === hoveredNode;
               const isSelected = node.id === selectedNode;
+              const isConnectTarget = connecting && connecting.sourceId !== node.id;
 
               let fill = '#1c1c24';
               let stroke = '#2a2a35';
               if (node.isStart) { fill = '#1a2a1a'; stroke = '#40a060'; }
               if (node.isEnding) { fill = '#2a1a1a'; stroke = '#c04040'; }
               if (isHovered || isSelected) { stroke = '#c0a050'; }
+              if (isConnectTarget && isHovered) { stroke = '#c0a050'; fill = '#1c241c'; }
 
               return (
                 <g
@@ -339,10 +465,11 @@ export default function GraphView({ story }: Props) {
                   transform={`translate(${node.x},${node.y})`}
                   opacity={opacity}
                   onMouseDown={e => handleNodeMouseDown(e, node.id)}
+                  onMouseUp={e => handleNodeMouseUp(e, node.id)}
                   onMouseEnter={() => setHoveredNode(node.id)}
                   onMouseLeave={() => setHoveredNode(null)}
-                  onClick={e => { e.stopPropagation(); setSelectedNode(node.id === selectedNode ? null : node.id); }}
-                  style={{ cursor: 'grab' }}
+                  onClick={e => { e.stopPropagation(); if (!connecting) setSelectedNode(node.id === selectedNode ? null : node.id); }}
+                  style={{ cursor: connecting ? 'crosshair' : onStoryChange ? 'grab' : 'grab' }}
                 >
                   <circle
                     r={NODE_RADIUS}
@@ -350,9 +477,9 @@ export default function GraphView({ story }: Props) {
                     stroke={stroke}
                     strokeWidth={isHovered || isSelected ? 3 : 1.5}
                   />
-                  {/* Inner ring for stat-check nodes */}
+                  {/* Inner ring — visual hint for connection zone boundary */}
                   {node.choiceCount > 0 && (
-                    <circle r={NODE_RADIUS - 5} fill="none" stroke={stroke} strokeWidth={0.5} opacity={0.4} />
+                    <circle r={NODE_RADIUS - CONNECTION_ZONE} fill="none" stroke={stroke} strokeWidth={0.5} opacity={0.4} />
                   )}
                   {/* Speaker initial */}
                   <text
@@ -391,6 +518,33 @@ export default function GraphView({ story }: Props) {
             })}
           </g>
         </svg>
+
+        {/* Connection prompt modal */}
+        {connectionPrompt && (
+          <div className="modal-overlay" onClick={() => setConnectionPrompt(null)}>
+            <div className="modal connection-modal" onClick={e => e.stopPropagation()}>
+              <h3>Create Connection</h3>
+              <p className="connection-info">
+                {connectionPrompt.sourceId} → {connectionPrompt.targetId}
+              </p>
+              <label>
+                Choice Label
+                <input
+                  type="text"
+                  value={connectionLabel}
+                  onChange={e => setConnectionLabel(e.target.value)}
+                  placeholder="Enter choice text..."
+                  autoFocus
+                  onKeyDown={e => { if (e.key === 'Enter' && connectionLabel.trim()) handleCreateConnection(); }}
+                />
+              </label>
+              <div className="connection-actions">
+                <button className="btn-secondary" onClick={() => setConnectionPrompt(null)}>Cancel</button>
+                <button className="btn-primary" disabled={!connectionLabel.trim()} onClick={handleCreateConnection}>Create</button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Detail panel */}
         {selected && (
@@ -432,6 +586,7 @@ export default function GraphView({ story }: Props) {
         <span><span className="legend-dot legend-normal" /> Scene</span>
         <span><span className="legend-line legend-solid" /> Choice</span>
         <span><span className="legend-line legend-dashed" /> Fail Path</span>
+        {onStoryChange && <span style={{ marginLeft: 'auto', color: '#c0a050' }}>Drag outer ring to connect nodes</span>}
       </div>
     </div>
   );

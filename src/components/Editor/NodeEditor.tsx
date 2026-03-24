@@ -1,11 +1,13 @@
 import { useState } from 'react';
-import { StoryNode, Choice, StatName } from '../../types';
-import { STAT_NAMES } from '../../engine';
+import { StoryNode, Choice, StatConfig } from '../../types';
+import { isValidNodeId } from '../../engine';
 
 interface Props {
   node: StoryNode;
   allNodeIds: string[];
+  statConfig: StatConfig;
   onSave: (node: StoryNode) => void;
+  onRename: (oldId: string, updatedNode: StoryNode) => void;
   onDelete: () => void;
   onCancel: () => void;
 }
@@ -14,8 +16,11 @@ function emptyChoice(): Choice {
   return { label: '', targetId: '' };
 }
 
-export default function NodeEditor({ node, allNodeIds, onSave, onDelete, onCancel }: Props) {
+export default function NodeEditor({ node, allNodeIds, statConfig, onSave, onRename, onDelete, onCancel }: Props) {
   const [draft, setDraft] = useState<StoryNode>(structuredClone(node));
+  const [draftId, setDraftId] = useState(node.id);
+  const idError = isValidNodeId(draftId, allNodeIds, node.id);
+  const idChanged = draftId !== node.id;
 
   function updateField<K extends keyof StoryNode>(key: K, value: StoryNode[K]) {
     setDraft(d => ({ ...d, [key]: value }));
@@ -44,7 +49,8 @@ export default function NodeEditor({ node, allNodeIds, onSave, onDelete, onCance
         const { check: _, ...rest } = choices[idx];
         choices[idx] = rest;
       } else {
-        choices[idx] = { ...choices[idx], check: { stat: 'resolve', dc: 10 } };
+        const defaultStat = statConfig.stats[0]?.key ?? 'resolve';
+        choices[idx] = { ...choices[idx], check: { stat: defaultStat, dc: 8 } };
       }
       return { ...d, choices };
     });
@@ -57,12 +63,32 @@ export default function NodeEditor({ node, allNodeIds, onSave, onDelete, onCance
         <div className="editor-actions">
           <button className="btn-danger" onClick={onDelete}>Delete</button>
           <button className="btn-secondary" onClick={onCancel}>Cancel</button>
-          <button className="btn-primary" onClick={() => onSave(draft)}>Save</button>
+          <button
+            className="btn-primary"
+            disabled={!!idError}
+            onClick={() => {
+              const updatedDraft = { ...draft, id: draftId };
+              if (idChanged) {
+                onRename(node.id, updatedDraft);
+              } else {
+                onSave(updatedDraft);
+              }
+            }}
+          >Save</button>
         </div>
       </div>
 
       <div className="editor-fields">
-        <label>ID <input type="text" value={draft.id} disabled /></label>
+        <label>
+          ID
+          <input
+            type="text"
+            value={draftId}
+            onChange={e => setDraftId(e.target.value)}
+            className={idError ? 'input-error' : ''}
+          />
+          {idError && <span className="field-error">{idError}</span>}
+        </label>
         <label>Speaker
           <input type="text" value={draft.speaker} onChange={e => updateField('speaker', e.target.value)} />
         </label>
@@ -94,10 +120,16 @@ export default function NodeEditor({ node, allNodeIds, onSave, onDelete, onCance
           </label>
         </div>
 
-        <label className="checkbox-label">
-          <input type="checkbox" checked={draft.ending ?? false} onChange={e => updateField('ending', e.target.checked)} />
-          Ending node
-        </label>
+        <div className="checkbox-row">
+          <label className="checkbox-label">
+            <input type="checkbox" checked={draft.ending ?? false} onChange={e => updateField('ending', e.target.checked)} />
+            Ending node
+          </label>
+          <label className="checkbox-label">
+            <input type="checkbox" checked={draft.statConfirmation ?? false} onChange={e => updateField('statConfirmation', e.target.checked)} />
+            Stat confirmation
+          </label>
+        </div>
 
         <div className="choices-section">
           <h4>Choices (Relationships)</h4>
@@ -152,15 +184,15 @@ export default function NodeEditor({ node, allNodeIds, onSave, onDelete, onCance
                   <>
                     <select
                       value={choice.check.stat}
-                      onChange={e => updateChoice(idx, { check: { ...choice.check!, stat: e.target.value as StatName } })}
+                      onChange={e => updateChoice(idx, { check: { ...choice.check!, stat: e.target.value } })}
                     >
-                      {STAT_NAMES.map(s => <option key={s} value={s}>{s}</option>)}
+                      {statConfig.stats.map(def => <option key={def.key} value={def.key}>{def.name}</option>)}
                     </select>
                     <label>DC
                       <input
                         type="number"
-                        min={1}
-                        max={30}
+                        min={2}
+                        max={16}
                         value={choice.check.dc}
                         onChange={e => updateChoice(idx, { check: { ...choice.check!, dc: Number(e.target.value) } })}
                       />
@@ -175,6 +207,44 @@ export default function NodeEditor({ node, allNodeIds, onSave, onDelete, onCance
                       ))}
                     </select>
                   </>
+                )}
+              </div>
+
+              {/* Stat bonuses */}
+              <div className="choice-bonuses-row">
+                <label className="checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={!!choice.statBonuses && Object.keys(choice.statBonuses).length > 0}
+                    onChange={() => {
+                      if (choice.statBonuses && Object.keys(choice.statBonuses).length > 0) {
+                        updateChoice(idx, { statBonuses: undefined });
+                      } else {
+                        const bonuses: Record<string, number> = {};
+                        statConfig.stats.forEach(def => { bonuses[def.key] = 0; });
+                        updateChoice(idx, { statBonuses: bonuses });
+                      }
+                    }}
+                  />
+                  Stat bonuses
+                </label>
+                {choice.statBonuses && Object.keys(choice.statBonuses).length > 0 && (
+                  <div className="stat-bonus-inputs">
+                    {statConfig.stats.map(def => (
+                      <label key={def.key} className="stat-bonus-label">
+                        {def.name}
+                        <input
+                          type="number"
+                          min={-6}
+                          max={6}
+                          value={choice.statBonuses?.[def.key] ?? 0}
+                          onChange={e => updateChoice(idx, {
+                            statBonuses: { ...choice.statBonuses, [def.key]: Number(e.target.value) },
+                          })}
+                        />
+                      </label>
+                    ))}
+                  </div>
                 )}
               </div>
             </div>

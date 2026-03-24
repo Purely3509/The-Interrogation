@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { StoryData, StoryNode } from '../../types';
-import { saveStory } from '../../engine';
+import { StoryData, StoryNode, StatConfig, StatDefinition } from '../../types';
+import { saveStory, renameNode } from '../../engine';
 import StoryMap from './StoryMap';
 import NodeEditor from './NodeEditor';
 
@@ -20,15 +20,18 @@ export default function Editor({ story, onStoryChange }: Props) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [storyTitle, setStoryTitle] = useState(story.title);
   const [startNodeId, setStartNodeId] = useState(story.startNodeId);
+  const [showStatConfig, setShowStatConfig] = useState(false);
 
   const selectedNode = selectedNodeId ? story.nodes[selectedNodeId] ?? null : null;
   const allNodeIds = Object.keys(story.nodes);
+  const statConfig = story.statConfig;
 
-  function commit(nodes: Record<string, StoryNode>, title?: string, start?: string) {
+  function commit(nodes: Record<string, StoryNode>, title?: string, start?: string, sc?: StatConfig) {
     const updated: StoryData = {
       title: title ?? storyTitle,
       startNodeId: start ?? startNodeId,
       nodes,
+      statConfig: sc ?? statConfig,
     };
     onStoryChange(updated);
     saveStory(updated);
@@ -46,6 +49,20 @@ export default function Editor({ story, onStoryChange }: Props) {
     const nodes = { ...story.nodes, [node.id]: node };
     commit(nodes);
     setSelectedNodeId(null);
+  }
+
+  function handleRenameNode(oldId: string, updatedNode: StoryNode) {
+    const renamedStory = renameNode(story, oldId, updatedNode.id);
+    // Update the node content as well (speaker, text, choices, etc.)
+    renamedStory.nodes[updatedNode.id] = updatedNode;
+    const updated: StoryData = {
+      ...renamedStory,
+      title: storyTitle,
+    };
+    onStoryChange(updated);
+    saveStory(updated);
+    setStartNodeId(updated.startNodeId);
+    setSelectedNodeId(updatedNode.id);
   }
 
   function handleDeleteNode() {
@@ -68,6 +85,10 @@ export default function Editor({ story, onStoryChange }: Props) {
   function handleStartChange(start: string) {
     setStartNodeId(start);
     commit(story.nodes, undefined, start);
+  }
+
+  function handleStatConfigChange(newConfig: StatConfig) {
+    commit(story.nodes, undefined, undefined, newConfig);
   }
 
   function handleExport() {
@@ -119,6 +140,12 @@ export default function Editor({ story, onStoryChange }: Props) {
               {allNodeIds.map(id => <option key={id} value={id}>{id}</option>)}
             </select>
           </label>
+          <button
+            className={`btn-secondary ${showStatConfig ? 'active' : ''}`}
+            onClick={() => setShowStatConfig(!showStatConfig)}
+          >
+            Stats Config
+          </button>
         </div>
         <div className="toolbar-right">
           <button className="btn-secondary" onClick={handleImport}>Import</button>
@@ -126,6 +153,10 @@ export default function Editor({ story, onStoryChange }: Props) {
           <button className="btn-primary" onClick={handleAddNode}>+ New Node</button>
         </div>
       </div>
+
+      {showStatConfig && (
+        <StatConfigEditor config={statConfig} onChange={handleStatConfigChange} />
+      )}
 
       <div className="editor-body">
         <StoryMap story={story} selectedNodeId={selectedNodeId} onSelectNode={setSelectedNodeId} />
@@ -136,7 +167,9 @@ export default function Editor({ story, onStoryChange }: Props) {
               key={selectedNodeId}
               node={selectedNode}
               allNodeIds={allNodeIds}
+              statConfig={statConfig}
               onSave={handleSaveNode}
+              onRename={handleRenameNode}
               onDelete={handleDeleteNode}
               onCancel={() => setSelectedNodeId(null)}
             />
@@ -147,6 +180,93 @@ export default function Editor({ story, onStoryChange }: Props) {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// --- Stat Config Editor ---
+
+interface StatConfigEditorProps {
+  config: StatConfig;
+  onChange: (config: StatConfig) => void;
+}
+
+function StatConfigEditor({ config, onChange }: StatConfigEditorProps) {
+  function updateStat(idx: number, patch: Partial<StatDefinition>) {
+    const stats = [...config.stats];
+    stats[idx] = { ...stats[idx], ...patch };
+    onChange({ ...config, stats });
+  }
+
+  function addStat() {
+    const key = `stat_${Date.now()}`;
+    onChange({
+      ...config,
+      stats: [...config.stats, { key, name: 'New Stat', description: 'Description...' }],
+    });
+  }
+
+  function removeStat(idx: number) {
+    onChange({
+      ...config,
+      stats: config.stats.filter((_, i) => i !== idx),
+    });
+  }
+
+  return (
+    <div className="stat-config-editor">
+      <div className="stat-config-header">
+        <h4>Stats Configuration</h4>
+        <div className="stat-config-globals">
+          <label>Max Value
+            <input
+              type="number"
+              min={1}
+              max={20}
+              value={config.maxValue}
+              onChange={e => onChange({ ...config, maxValue: Number(e.target.value) })}
+            />
+          </label>
+          <label>Point Total
+            <input
+              type="number"
+              min={1}
+              max={100}
+              value={config.pointTotal}
+              onChange={e => onChange({ ...config, pointTotal: Number(e.target.value) })}
+            />
+          </label>
+        </div>
+      </div>
+      <div className="stat-config-list">
+        {config.stats.map((def, idx) => (
+          <div key={idx} className="stat-config-row">
+            <input
+              type="text"
+              placeholder="Key"
+              value={def.key}
+              onChange={e => updateStat(idx, { key: e.target.value })}
+              className="stat-config-key"
+            />
+            <input
+              type="text"
+              placeholder="Display Name"
+              value={def.name}
+              onChange={e => updateStat(idx, { name: e.target.value })}
+              className="stat-config-name"
+            />
+            <input
+              type="text"
+              placeholder="Description"
+              value={def.description}
+              onChange={e => updateStat(idx, { description: e.target.value })}
+              className="stat-config-desc"
+            />
+            <button className="btn-icon" onClick={() => removeStat(idx)} title="Remove stat">✕</button>
+          </div>
+        ))}
+      </div>
+      <button className="btn-secondary" onClick={addStat}>+ Add Stat</button>
     </div>
   );
 }

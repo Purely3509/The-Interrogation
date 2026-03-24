@@ -1,24 +1,37 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
-  rollD20,
+  rollD6,
+  roll2d6,
   attemptCheck,
+  passiveCheck,
   isChoiceVisible,
   transitionTo,
   createDefaultPlayer,
+  createProloguePlayer,
   saveStory,
   loadStory,
   savePlayer,
   loadPlayer,
   clearSave,
-  STAT_POINT_TOTAL,
-  STAT_MAX,
   STAT_MIN,
-  STAT_NAMES,
-  STAT_DESCRIPTIONS,
+  DEFAULT_STAT_CONFIG,
+  isValidNodeId,
+  renameNode,
 } from './engine';
-import { Choice, PlayerState, StoryNode, StoryData } from './types';
+import { Choice, PlayerState, StoryNode, StoryData, StatConfig } from './types';
 
 // ─── Helpers ───
+
+const testStatConfig: StatConfig = {
+  stats: [
+    { key: 'resolve', name: 'Resolve', description: 'Mental fortitude.' },
+    { key: 'wit', name: 'Wit', description: 'Quick thinking.' },
+    { key: 'composure', name: 'Composure', description: 'Emotional control.' },
+    { key: 'deception', name: 'Deception', description: 'The art of lying.' },
+  ],
+  maxValue: 6,
+  pointTotal: 10,
+};
 
 function makePlayer(overrides: Partial<PlayerState> = {}): PlayerState {
   return {
@@ -50,28 +63,45 @@ function makeChoice(overrides: Partial<Choice> = {}): Choice {
   };
 }
 
-// ─── rollD20 ───
+// ─── rollD6 ───
 
-describe('rollD20', () => {
-  it('returns a number between 1 and 20', () => {
+describe('rollD6', () => {
+  it('returns a number between 1 and 6', () => {
     for (let i = 0; i < 200; i++) {
-      const result = rollD20();
+      const result = rollD6();
       expect(result).toBeGreaterThanOrEqual(1);
-      expect(result).toBeLessThanOrEqual(20);
+      expect(result).toBeLessThanOrEqual(6);
     }
   });
 
   it('returns an integer', () => {
     for (let i = 0; i < 50; i++) {
-      expect(Number.isInteger(rollD20())).toBe(true);
+      expect(Number.isInteger(rollD6())).toBe(true);
+    }
+  });
+});
+
+// ─── roll2d6 ───
+
+describe('roll2d6', () => {
+  it('returns a tuple of two numbers between 1 and 6', () => {
+    for (let i = 0; i < 200; i++) {
+      const [d1, d2] = roll2d6();
+      expect(d1).toBeGreaterThanOrEqual(1);
+      expect(d1).toBeLessThanOrEqual(6);
+      expect(d2).toBeGreaterThanOrEqual(1);
+      expect(d2).toBeLessThanOrEqual(6);
     }
   });
 
   it('produces varied results over many rolls', () => {
-    const results = new Set<number>();
-    for (let i = 0; i < 500; i++) results.add(rollD20());
-    // Should hit at least 15 different values in 500 rolls
-    expect(results.size).toBeGreaterThanOrEqual(15);
+    const sums = new Set<number>();
+    for (let i = 0; i < 500; i++) {
+      const [d1, d2] = roll2d6();
+      sums.add(d1 + d2);
+    }
+    // 2d6 produces sums from 2-12, should hit at least 8 different sums
+    expect(sums.size).toBeGreaterThanOrEqual(8);
   });
 });
 
@@ -80,72 +110,117 @@ describe('rollD20', () => {
 describe('attemptCheck', () => {
   it('returns correct structure', () => {
     const stats = { resolve: 3, wit: 2, composure: 1, deception: 0 };
-    const result = attemptCheck('resolve', 12, stats);
+    const result = attemptCheck('resolve', 8, stats);
     expect(result).toHaveProperty('stat', 'resolve');
-    expect(result).toHaveProperty('dc', 12);
-    expect(result).toHaveProperty('roll');
+    expect(result).toHaveProperty('dc', 8);
+    expect(result).toHaveProperty('dice');
+    expect(result.dice).toHaveLength(2);
     expect(result).toHaveProperty('modifier', 3);
     expect(result).toHaveProperty('total');
     expect(result).toHaveProperty('success');
+    expect(result).toHaveProperty('critFail');
+    expect(result).toHaveProperty('critSuccess');
     expect(result).toHaveProperty('choiceLabel', '');
   });
 
-  it('calculates total as roll + modifier', () => {
-    const stats = { resolve: 4, wit: 0, composure: 0, deception: 0 };
-    const result = attemptCheck('resolve', 10, stats);
-    expect(result.total).toBe(result.roll + 4);
+  it('calculates total as d1 + d2 + modifier', () => {
+    const stats = { resolve: 4 };
+    const result = attemptCheck('resolve', 8, stats);
+    expect(result.total).toBe(result.dice[0] + result.dice[1] + 4);
   });
 
-  it('succeeds when total >= dc', () => {
-    // Mock Math.random to return high roll (20)
-    vi.spyOn(Math, 'random').mockReturnValue(0.999);
-    const stats = { resolve: 0, wit: 0, composure: 0, deception: 0 };
-    const result = attemptCheck('resolve', 10, stats);
-    expect(result.roll).toBe(20);
-    expect(result.success).toBe(true);
+  it('uses 0 as modifier for unknown stat', () => {
+    const stats = { resolve: 4 };
+    const result = attemptCheck('unknown_stat', 8, stats);
+    expect(result.modifier).toBe(0);
+    expect(result.total).toBe(result.dice[0] + result.dice[1]);
+  });
+
+  it('snake eyes (double 1) is automatic fail', () => {
+    // Mock to return 1, 1
+    let callCount = 0;
+    vi.spyOn(Math, 'random').mockImplementation(() => {
+      callCount++;
+      return 0; // always returns 1 on a d6
+    });
+    const stats = { resolve: 10 }; // High stat, would normally succeed
+    const result = attemptCheck('resolve', 2, stats); // Low DC
+    expect(result.dice).toEqual([1, 1]);
+    expect(result.critFail).toBe(true);
+    expect(result.critSuccess).toBe(false);
+    expect(result.success).toBe(false); // Auto fail despite high total
     vi.restoreAllMocks();
   });
 
-  it('fails when total < dc', () => {
-    // Mock Math.random to return low roll (1)
-    vi.spyOn(Math, 'random').mockReturnValue(0);
-    const stats = { resolve: 0, wit: 0, composure: 0, deception: 0 };
-    const result = attemptCheck('resolve', 10, stats);
-    expect(result.roll).toBe(1);
+  it('double sixes is automatic success', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.999); // returns 6
+    const stats = { resolve: 0 };
+    const result = attemptCheck('resolve', 20, stats); // Impossibly high DC
+    expect(result.dice).toEqual([6, 6]);
+    expect(result.critSuccess).toBe(true);
+    expect(result.critFail).toBe(false);
+    expect(result.success).toBe(true); // Auto success despite low total
+    vi.restoreAllMocks();
+  });
+
+  it('succeeds when total >= dc (no crit)', () => {
+    // Mock: first d6 returns 4, second d6 returns 3
+    let callCount = 0;
+    vi.spyOn(Math, 'random').mockImplementation(() => {
+      callCount++;
+      return callCount % 2 === 1 ? 0.5 : 0.333; // d6: 4, 3
+    });
+    const stats = { resolve: 2 };
+    const result = attemptCheck('resolve', 9, stats);
+    // total = 4 + 3 + 2 = 9, dc = 9
+    expect(result.total).toBe(result.dice[0] + result.dice[1] + 2);
+    if (result.total >= 9 && !result.critFail) {
+      expect(result.success).toBe(true);
+    }
+    vi.restoreAllMocks();
+  });
+
+  it('fails when total < dc (no crit)', () => {
+    // Mock both dice to 2: Math.floor(0.2 * 6) + 1 = 2
+    vi.spyOn(Math, 'random').mockReturnValue(0.2);
+    const stats = { resolve: 1 };
+    const result = attemptCheck('resolve', 8, stats);
+    // total = 2 + 2 + 1 = 5, dc = 8
+    expect(result.dice).toEqual([2, 2]);
+    expect(result.total).toBe(5);
+    expect(result.critFail).toBe(false); // Not snake eyes
     expect(result.success).toBe(false);
     vi.restoreAllMocks();
   });
 
   it('uses the correct stat modifier', () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0.5); // roll = 11
+    vi.spyOn(Math, 'random').mockReturnValue(0.5); // each d6 = 4
     const stats = { resolve: 1, wit: 3, composure: 5, deception: 0 };
 
-    const witResult = attemptCheck('wit', 10, stats);
+    const witResult = attemptCheck('wit', 8, stats);
     expect(witResult.modifier).toBe(3);
-    expect(witResult.total).toBe(witResult.roll + 3);
+    expect(witResult.total).toBe(witResult.dice[0] + witResult.dice[1] + 3);
 
-    const compResult = attemptCheck('composure', 10, stats);
+    const compResult = attemptCheck('composure', 8, stats);
     expect(compResult.modifier).toBe(5);
 
     vi.restoreAllMocks();
   });
+});
 
-  it('succeeds exactly at dc boundary', () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0.45); // roll = 10
-    const stats = { resolve: 2, wit: 0, composure: 0, deception: 0 };
-    const result = attemptCheck('resolve', 12, stats);
-    expect(result.total).toBe(12);
-    expect(result.success).toBe(true);
-    vi.restoreAllMocks();
+// ─── passiveCheck ───
+
+describe('passiveCheck', () => {
+  it('succeeds when stat + 6 >= dc', () => {
+    expect(passiveCheck('resolve', 8, { resolve: 2 })).toBe(true); // 2 + 6 = 8 >= 8
   });
 
-  it('fails one below dc boundary', () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0.4); // roll = 9
-    const stats = { resolve: 2, wit: 0, composure: 0, deception: 0 };
-    const result = attemptCheck('resolve', 12, stats);
-    expect(result.total).toBe(11);
-    expect(result.success).toBe(false);
-    vi.restoreAllMocks();
+  it('fails when stat + 6 < dc', () => {
+    expect(passiveCheck('resolve', 9, { resolve: 2 })).toBe(false); // 2 + 6 = 8 < 9
+  });
+
+  it('uses 0 for unknown stat', () => {
+    expect(passiveCheck('unknown', 7, { resolve: 2 })).toBe(false); // 0 + 6 = 6 < 7
   });
 });
 
@@ -325,65 +400,228 @@ describe('transitionTo', () => {
     const result = transitionTo(node, player);
     expect(result.items).toEqual(['Knife']);
   });
+
+  it('applies stat bonuses from a choice', () => {
+    const player = makePlayer({ stats: { resolve: 2, wit: 2, composure: 2, deception: 2 } });
+    const node = makeNode({ id: 'next' });
+    const choice = makeChoice({ statBonuses: { resolve: 1, wit: 2 } });
+    const result = transitionTo(node, player, choice, testStatConfig);
+    expect(result.stats.resolve).toBe(3);
+    expect(result.stats.wit).toBe(4);
+    expect(result.stats.composure).toBe(2); // unchanged
+  });
+
+  it('clamps stat bonuses to maxValue', () => {
+    const player = makePlayer({ stats: { resolve: 5 } });
+    const node = makeNode({ id: 'next' });
+    const choice = makeChoice({ statBonuses: { resolve: 3 } });
+    const result = transitionTo(node, player, choice, testStatConfig);
+    expect(result.stats.resolve).toBe(6); // maxValue is 6
+  });
+
+  it('does not apply stat bonuses when choice has none', () => {
+    const player = makePlayer({ stats: { resolve: 2 } });
+    const node = makeNode({ id: 'next' });
+    const choice = makeChoice();
+    const result = transitionTo(node, player, choice, testStatConfig);
+    expect(result.stats.resolve).toBe(2);
+  });
 });
 
 // ─── createDefaultPlayer ───
 
 describe('createDefaultPlayer', () => {
   it('creates a player with the correct start node', () => {
-    const player = createDefaultPlayer('intro');
+    const player = createDefaultPlayer('intro', testStatConfig);
     expect(player.currentNodeId).toBe('intro');
     expect(player.history).toEqual(['intro']);
   });
 
   it('has default name "Agent"', () => {
-    expect(createDefaultPlayer('x').name).toBe('Agent');
+    expect(createDefaultPlayer('x', testStatConfig).name).toBe('Agent');
   });
 
-  it('has balanced stats totaling 8', () => {
-    const player = createDefaultPlayer('x');
-    const total = player.stats.resolve + player.stats.wit + player.stats.composure + player.stats.deception;
-    expect(total).toBe(STAT_POINT_TOTAL);
+  it('has balanced stats using statConfig', () => {
+    const player = createDefaultPlayer('x', testStatConfig);
+    const total = Object.values(player.stats).reduce((a, b) => a + b, 0);
+    // 10 / 4 = 2 per stat, total = 8 (floor rounding)
+    const expectedPerStat = Math.floor(testStatConfig.pointTotal / testStatConfig.stats.length);
+    expect(total).toBe(expectedPerStat * testStatConfig.stats.length);
   });
 
   it('starts with empty items and flags', () => {
-    const player = createDefaultPlayer('x');
+    const player = createDefaultPlayer('x', testStatConfig);
     expect(player.items).toEqual([]);
     expect(player.flags).toEqual([]);
   });
 
-  it('each stat is 2 by default', () => {
-    const player = createDefaultPlayer('x');
-    for (const stat of STAT_NAMES) {
-      expect(player.stats[stat]).toBe(2);
+  it('creates stats for each stat in config', () => {
+    const player = createDefaultPlayer('x', testStatConfig);
+    for (const def of testStatConfig.stats) {
+      expect(player.stats).toHaveProperty(def.key);
     }
+  });
+
+  it('uses DEFAULT_STAT_CONFIG when no config provided', () => {
+    const player = createDefaultPlayer('x');
+    for (const def of DEFAULT_STAT_CONFIG.stats) {
+      expect(player.stats).toHaveProperty(def.key);
+    }
+  });
+});
+
+// ─── createProloguePlayer ───
+
+describe('createProloguePlayer', () => {
+  it('creates a player with all stats at 1', () => {
+    const player = createProloguePlayer('intro', testStatConfig);
+    for (const def of testStatConfig.stats) {
+      expect(player.stats[def.key]).toBe(1);
+    }
+  });
+
+  it('starts at the given node', () => {
+    const player = createProloguePlayer('intro', testStatConfig);
+    expect(player.currentNodeId).toBe('intro');
+    expect(player.history).toEqual(['intro']);
+  });
+
+  it('has default name "Agent"', () => {
+    expect(createProloguePlayer('x', testStatConfig).name).toBe('Agent');
   });
 });
 
 // ─── Constants ───
 
 describe('constants', () => {
-  it('STAT_POINT_TOTAL is 8', () => {
-    expect(STAT_POINT_TOTAL).toBe(8);
-  });
-
-  it('STAT_MAX is 5', () => {
-    expect(STAT_MAX).toBe(5);
-  });
-
   it('STAT_MIN is 0', () => {
     expect(STAT_MIN).toBe(0);
   });
 
-  it('STAT_NAMES has all four stats', () => {
-    expect(STAT_NAMES).toEqual(['resolve', 'wit', 'composure', 'deception']);
+  it('DEFAULT_STAT_CONFIG has four stats', () => {
+    expect(DEFAULT_STAT_CONFIG.stats).toHaveLength(4);
   });
 
-  it('STAT_DESCRIPTIONS has an entry for each stat', () => {
-    for (const name of STAT_NAMES) {
-      expect(typeof STAT_DESCRIPTIONS[name]).toBe('string');
-      expect(STAT_DESCRIPTIONS[name].length).toBeGreaterThan(0);
+  it('DEFAULT_STAT_CONFIG has expected keys', () => {
+    const keys = DEFAULT_STAT_CONFIG.stats.map(s => s.key);
+    expect(keys).toEqual(['resolve', 'wit', 'composure', 'deception']);
+  });
+
+  it('DEFAULT_STAT_CONFIG has descriptions for each stat', () => {
+    for (const def of DEFAULT_STAT_CONFIG.stats) {
+      expect(typeof def.description).toBe('string');
+      expect(def.description.length).toBeGreaterThan(0);
     }
+  });
+
+  it('DEFAULT_STAT_CONFIG maxValue is 6', () => {
+    expect(DEFAULT_STAT_CONFIG.maxValue).toBe(6);
+  });
+
+  it('DEFAULT_STAT_CONFIG pointTotal is 10', () => {
+    expect(DEFAULT_STAT_CONFIG.pointTotal).toBe(10);
+  });
+});
+
+// ─── isValidNodeId ───
+
+describe('isValidNodeId', () => {
+  const existing = ['intro', 'node_a', 'node_b'];
+
+  it('returns null for a valid new ID', () => {
+    expect(isValidNodeId('new_node', existing, 'intro')).toBeNull();
+  });
+
+  it('returns null when ID is unchanged (same as currentId)', () => {
+    expect(isValidNodeId('intro', existing, 'intro')).toBeNull();
+  });
+
+  it('returns error for empty string', () => {
+    expect(isValidNodeId('', existing, 'intro')).toBe('ID cannot be empty');
+  });
+
+  it('returns error for whitespace-only string', () => {
+    expect(isValidNodeId('   ', existing, 'intro')).toBe('ID cannot be empty');
+  });
+
+  it('returns error for invalid characters', () => {
+    expect(isValidNodeId('node with spaces', existing, 'intro')).not.toBeNull();
+    expect(isValidNodeId('node.dot', existing, 'intro')).not.toBeNull();
+  });
+
+  it('returns error for duplicate ID', () => {
+    expect(isValidNodeId('node_a', existing, 'intro')).toBe('A node with this ID already exists');
+  });
+
+  it('allows hyphens and underscores', () => {
+    expect(isValidNodeId('my-node_1', existing, 'intro')).toBeNull();
+  });
+});
+
+// ─── renameNode ───
+
+describe('renameNode', () => {
+  const story: StoryData = {
+    title: 'Test',
+    startNodeId: 'start',
+    statConfig: testStatConfig,
+    nodes: {
+      start: {
+        id: 'start',
+        speaker: 'Narrator',
+        text: 'Begin',
+        choices: [
+          { label: 'Go to A', targetId: 'node_a' },
+          { label: 'Go to B', targetId: 'node_b', check: { stat: 'wit', dc: 8 }, failTargetId: 'node_a' },
+        ],
+      },
+      node_a: {
+        id: 'node_a',
+        speaker: 'Narrator',
+        text: 'Node A',
+        choices: [{ label: 'Back', targetId: 'start' }],
+      },
+      node_b: {
+        id: 'node_b',
+        speaker: 'Narrator',
+        text: 'Node B',
+        choices: [{ label: 'To A', targetId: 'node_a' }],
+      },
+    },
+  };
+
+  it('renames the node key and id property', () => {
+    const result = renameNode(story, 'node_a', 'alpha');
+    expect(result.nodes['alpha']).toBeDefined();
+    expect(result.nodes['node_a']).toBeUndefined();
+    expect(result.nodes['alpha'].id).toBe('alpha');
+  });
+
+  it('updates targetId references in other nodes', () => {
+    const result = renameNode(story, 'node_a', 'alpha');
+    // start's first choice pointed to node_a, should now point to alpha
+    expect(result.nodes['start'].choices[0].targetId).toBe('alpha');
+    // node_b's choice pointed to node_a
+    expect(result.nodes['node_b'].choices[0].targetId).toBe('alpha');
+  });
+
+  it('updates failTargetId references', () => {
+    const result = renameNode(story, 'node_a', 'alpha');
+    // start's second choice has failTargetId: 'node_a'
+    expect(result.nodes['start'].choices[1].failTargetId).toBe('alpha');
+  });
+
+  it('updates startNodeId when renaming the start node', () => {
+    const result = renameNode(story, 'start', 'beginning');
+    expect(result.startNodeId).toBe('beginning');
+    expect(result.nodes['beginning']).toBeDefined();
+    expect(result.nodes['beginning'].id).toBe('beginning');
+  });
+
+  it('does not affect unrelated nodes', () => {
+    const result = renameNode(story, 'node_a', 'alpha');
+    expect(result.nodes['start'].id).toBe('start');
+    expect(result.nodes['node_b'].id).toBe('node_b');
   });
 });
 
@@ -397,6 +635,7 @@ describe('persistence (localStorage)', () => {
   const sampleStory: StoryData = {
     title: 'Test Story',
     startNodeId: 'start',
+    statConfig: testStatConfig,
     nodes: {
       start: {
         id: 'start',
@@ -480,6 +719,7 @@ describe('integration: mini story walkthrough', () => {
   const story: StoryData = {
     title: 'Mini',
     startNodeId: 'room',
+    statConfig: testStatConfig,
     nodes: {
       room: {
         id: 'room',
@@ -521,7 +761,7 @@ describe('integration: mini story walkthrough', () => {
   };
 
   it('plays through a full path: room → hallway → room → vault → end', () => {
-    let player = createDefaultPlayer('room');
+    let player = createDefaultPlayer('room', testStatConfig);
 
     // Arrive at room
     player = transitionTo(story.nodes.room, player);

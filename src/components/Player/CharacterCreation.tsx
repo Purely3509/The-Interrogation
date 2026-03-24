@@ -1,24 +1,33 @@
 import { useState } from 'react';
-import { Stats, StatName } from '../../types';
-import { STAT_POINT_TOTAL, STAT_MAX, STAT_MIN, STAT_NAMES, STAT_DESCRIPTIONS } from '../../engine';
+import { StatConfig, Stats } from '../../types';
+import { STAT_MIN } from '../../engine';
 
 interface Props {
+  statConfig: StatConfig;
   onFinish: (name: string, stats: Stats) => void;
 }
 
-export default function CharacterCreation({ onFinish }: Props) {
+export default function CharacterCreation({ statConfig, onFinish }: Props) {
   const [name, setName] = useState('');
-  const [stats, setStats] = useState<Stats>({ resolve: 2, wit: 2, composure: 2, deception: 2 });
+  const [stats, setStats] = useState<Stats>(() => {
+    const initial: Stats = {};
+    const defaultValue = Math.floor(statConfig.pointTotal / statConfig.stats.length);
+    for (const def of statConfig.stats) {
+      initial[def.key] = defaultValue;
+    }
+    return initial;
+  });
 
-  const spent = STAT_NAMES.reduce((sum, s) => sum + stats[s], 0);
-  const remaining = STAT_POINT_TOTAL - spent;
+  const spent = statConfig.stats.reduce((sum, def) => sum + (stats[def.key] ?? 0), 0);
+  const remaining = statConfig.pointTotal - spent;
 
-  function adjust(stat: StatName, delta: number) {
-    const next = stats[stat] + delta;
-    if (next < STAT_MIN || next > STAT_MAX) return;
+  function adjust(statKey: string, delta: number) {
+    const current = stats[statKey] ?? 0;
+    const next = current + delta;
+    if (next < STAT_MIN || next > statConfig.maxValue) return;
     const nextSpent = spent + delta;
-    if (nextSpent > STAT_POINT_TOTAL) return;
-    setStats({ ...stats, [stat]: next });
+    if (nextSpent > statConfig.pointTotal) return;
+    setStats({ ...stats, [statKey]: next });
   }
 
   return (
@@ -40,16 +49,16 @@ export default function CharacterCreation({ onFinish }: Props) {
 
       <div className="creation-stats">
         <p className="points-remaining">Skill points remaining: <strong>{remaining}</strong></p>
-        {STAT_NAMES.map(stat => (
-          <div key={stat} className="stat-row">
+        {statConfig.stats.map(def => (
+          <div key={def.key} className="stat-row">
             <div className="stat-info">
-              <span className="stat-name">{stat}</span>
-              <span className="stat-desc">{STAT_DESCRIPTIONS[stat]}</span>
+              <span className="stat-name">{def.name}</span>
+              <span className="stat-desc">{def.description}</span>
             </div>
             <div className="stat-controls">
-              <button onClick={() => adjust(stat, -1)} disabled={stats[stat] <= STAT_MIN}>−</button>
-              <span className="stat-value">{stats[stat]}</span>
-              <button onClick={() => adjust(stat, 1)} disabled={stats[stat] >= STAT_MAX || remaining <= 0}>+</button>
+              <button onClick={() => adjust(def.key, -1)} disabled={(stats[def.key] ?? 0) <= STAT_MIN}>−</button>
+              <span className="stat-value">{stats[def.key] ?? 0}</span>
+              <button onClick={() => adjust(def.key, 1)} disabled={(stats[def.key] ?? 0) >= statConfig.maxValue || remaining <= 0}>+</button>
             </div>
           </div>
         ))}
